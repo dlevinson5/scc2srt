@@ -140,8 +140,9 @@ def _debug_render_command(control_codes: str):
     command = None
 
     if control_codes[0] == 0x11:
-        if 0x20 <= control_codes[1] <= 0x2F:
-            command = "MRC - Mid-row Code"
+        pass
+        # if 0x20 <= control_codes[1] <= 0x2F:
+        #    command = "MRC - Mid-row Code"
     elif control_codes[0] == 0x14:
         if control_codes[1] == 0x20:
             command = "RCL - Resume caption loading"
@@ -197,6 +198,7 @@ def parse(file: str, logger: logging.Logger):
 
     channelOne = False
     currentBuffer = ""
+    italics = False
 
     last_cc_code1 = None
     last_cc_code2 = None
@@ -239,41 +241,53 @@ def parse(file: str, logger: logging.Logger):
                             cc_code2 = _ccTxMatrix[cc_raw_code2]
 
                             # skip diplciate codes (this may not be ideal)
-                            if cc_code1 == last_cc_code1 and cc_code2 == last_cc_code2:
+                            if (cc_raw_code1 == last_cc_code1 and cc_raw_code2 == last_cc_code2) or cc_code1 == 0x17:
                                 continue
                                  
-                            last_cc_code1 = cc_code1
-                            last_cc_code2 = cc_code2
+                            last_cc_code1 = cc_raw_code1
+                            last_cc_code2 = cc_raw_code2
 
                             if lastClear is None:
                                 lastClear = sampleTime
 
-                            # parse special character 
                             if cc_code1 == 0x11 and cc_raw_code2 in _specialChars:
                                 cc_code2 = _specialChars[cc_raw_code2]
+
+                            elif cc_code1 == 0x11 and cc_raw_code2 in _extendedChars:
+                                cc_code2 = _extendedChars[cc_raw_code2]
 
                             if logger:
                                 smpte = _milliseconds_to_smtpe(sampleTime * 1000)
                                 cmd = _debug_render_command([cc_code1, cc_code2])
 
                                 if cmd:
-                                     logger.debug("[{0}] [{4}] [{1:02x}] [{2:02x}] [{3}]".format(smpte, cc_code1, cc_code2, cmd, sample))
+                                    logger.debug("[{0}] [{4}] [{1:02x}] [{2:02x}] [{3}]".format(smpte, cc_code1, cc_code2, cmd, sample))
                                 else:
-                                     logger.debug("[{0}] [{5}] [{1:02x}] [{2:02x}] [{3}] [{4}]".format(smpte, cc_code1, cc_code2, chr(cc_code1), chr(cc_code2), sample))
+                                    try:
+                                        logger.debug("[{0}] [{1}] [{2:002x}] [{3:002x}] [{4}] [{5}]".format(smpte, sample, cc_code1, cc_code2, chr(cc_code1), chr(cc_code2)))
+                                    except:
+                                        logger.debug("[{0}] [{4}] [{1}] [{2}] [{3}]".format(smpte, cc_code1, cc_code2, cmd, sample))
 
                             if 0x10 <= cc_code1 <= 0x14:
 
                                 channelOne = True
 
-                                if ((cc_code1 == 0x14 and cc_code2 == 0x28) or (cc_code1 == 0x14 and cc_code2 == 0x72) or (cc_code1 == 0x14 and cc_code2 == 0x74) or (cc_code1 == 0x14 and cc_code2 == 0x70)):
+                                if (cc_code1 == 0x14 and cc_code2 == 0x28) or (cc_code1 == 0x14 and cc_code2 == 0x72) or (cc_code1 == 0x14 and cc_code2 == 0x74) or (cc_code1 == 0x14 and cc_code2 == 0x70):
                                     if currentBuffer:
                                         currentBuffer += '\n'
-                                elif cc_code1 == 0x14 and cc_code2 == 0x20:   
-                                    currentBuffer = ""
-                                    lastClear = sampleTime
+                                elif cc_code1 == 0x11 and cc_code2 == 0x2e:
+                                    if not italics:
+                                        currentBuffer += "<i>"
+                                        italics = True
                                 elif cc_code1 == 0x11 and cc_raw_code2 in _specialChars:
                                     currentBuffer += cc_code2
-                                elif (cc_code1 == 0x14 and (cc_code2 == 0x26 or cc_code2 == 0x2D or cc_code2 == 0x2F or cc_code2 == 0x2E)):
+                                elif cc_code1 == 0x12 and cc_raw_code2 in _extendedChars:
+                                    currentBuffer += cc_code2
+                                elif cc_code1 == 0x14 and (cc_code2 == 0x20 or cc_code2 == 0x26 or cc_code2 == 0x2f or cc_code2 == 0x2D or cc_code2 == 0x2F or cc_code2 == 0x2E):
+
+                                    if italics:
+                                        currentBuffer += "</i>"
+
                                     if currentBuffer:
                                         item = SCCItem()
                                         item.end_time = sampleTime * 1000
@@ -283,6 +297,7 @@ def parse(file: str, logger: logging.Logger):
 
                                     currentBuffer = ""
                                     lastClear = sampleTime
+                                    italics = False
 
                             elif 0x20 <= cc_code1 <= 0x7F and channelOne:
 
@@ -301,6 +316,7 @@ def parse(file: str, logger: logging.Logger):
 
 
 def write_srt(items: SCCItem, output_file: str):
+
      with open(output_file, "w+") as f:
         for idx, val  in enumerate(items):
             f.write('{}\n'.format(str(idx + 1)))
