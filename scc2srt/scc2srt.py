@@ -312,7 +312,7 @@ def parse(file: str, logger: logging.Logger):
                                         item.start_time = captionStart * 1000
                                         item.text = currentBuffer
                                         items.append(item)
-                                        print("{} {} {}".format(_milliseconds_to_smtpe(item.start_time), _milliseconds_to_smtpe(item.end_time), item.text))
+                                        # print("{} {} {}".format(_milliseconds_to_smtpe(item.start_time), _milliseconds_to_smtpe(item.end_time), item.text))
 
                                     currentBuffer = ""
                                     italics = False
