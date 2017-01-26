@@ -9,5 +9,5 @@ Example of usage in code:
 
     import scc2srt 
 
-    scc2srt.scc2srt("input.scc", "output.srt")
+    scc2srt.convert("input.scc", "output.srt")
 
