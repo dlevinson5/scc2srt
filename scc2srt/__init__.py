@@ -1,7 +1,7 @@
-import scc2srt.backend
+import scc2srt.scc2srt
 
 def convert(input_file: str, output_file: str, logger: None):
 
-    items = backend.parse(input_file, logger)
+    items = scc2srt.parse(input_file, logger)
 
-    backend.write_srt(items, output_file)
+    scc2srt.write_srt(items, output_file)

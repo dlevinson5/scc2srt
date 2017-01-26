@@ -47,7 +47,8 @@ _specialChars = {
     0xbc: 'ê',
     0x3d: 'î',
     0x3e: 'ô',
-    0xbf: 'û'
+    0xbf: 'û',
+    0x70: '\n'
 }
 
 _extendedChars = {
@@ -119,24 +120,22 @@ _extendedChars = {
 
 
 class SCCItem(object):
-
     start_time = None
     end_time = None
     text = None
 
 
 def _milliseconds_to_smtpe(time: int):
-
     hoursMs = int(time / 3600000) * 3600000
     minutesMs = int((time - hoursMs) / 60000) * 60000
     secondsMs = int((time - (hoursMs + minutesMs)) / 1000) * 1000
     millseconds = int(time - (hoursMs + minutesMs + secondsMs))
 
     return '{0:02d}:{1:02d}:{2:02d}.{3:03d}'.format(int(hoursMs / 3600000), int(minutesMs / 60000), int(secondsMs / 1000), int(millseconds))
+    # return '{0:02d}:{1:02d}:{2:02d}'.format(int(hoursMs / 3600000), int(minutesMs / 60000), int(secondsMs / 1000), int(millseconds))
 
 
 def _debug_render_command(control_codes: str):
-
     command = None
 
     if control_codes[0] == 0x11:
@@ -190,11 +189,10 @@ def _debug_render_command(control_codes: str):
 
 
 def parse(file: str, logger: logging.Logger):
-
     for i in range(128):
         _ccTxMatrix[tmpMatrix[i]] = i
 
-    fps = 30.00
+    fps = 23.96
 
     channelOne = False
     currentBuffer = ""
@@ -205,6 +203,10 @@ def parse(file: str, logger: logging.Logger):
 
     items = []
     lastClear = None
+
+    flipMemory = False
+
+    captionStart = None
 
     with open(file, 'r') as file:
         for line in file:
@@ -220,15 +222,21 @@ def parse(file: str, logger: logging.Logger):
 
                     if smpteTokens:
 
-                        #parse the line time 
+                        # parse the line time
                         time_stamp = smpteTokens.groups(1)
                         sampleTime = int(time_stamp[0]) * 3600 + int(time_stamp[1]) * 60 + int(time_stamp[2]) + (int(time_stamp[3]) / fps)
 
-                        #create tokenzed list of control codes
+                        if len(currentBuffer) == 0:
+                            captionStart = sampleTime
+
+                        # create tokenzed list of control codes
                         tokens = result.groups(2)[1].split(' ')
-                        
-                        #create list of control coders  
+
+                        # create list of control coders
                         codes = [f for f in tokens if len(f) > 0]
+
+                        if len(currentBuffer) > 0:
+                            flipMemory = True
 
                         for sample in codes:
 
@@ -243,7 +251,7 @@ def parse(file: str, logger: logging.Logger):
                             # skip diplciate codes (this may not be ideal)
                             if (cc_raw_code1 == last_cc_code1 and cc_raw_code2 == last_cc_code2) or cc_code1 == 0x17:
                                 continue
-                                 
+
                             last_cc_code1 = cc_raw_code1
                             last_cc_code2 = cc_raw_code2
 
@@ -272,32 +280,44 @@ def parse(file: str, logger: logging.Logger):
 
                                 channelOne = True
 
-                                if (cc_code1 == 0x14 and cc_code2 == 0x28) or (cc_code1 == 0x14 and cc_code2 == 0x72) or (cc_code1 == 0x14 and cc_code2 == 0x74) or (cc_code1 == 0x14 and cc_code2 == 0x70):
+                                if cc_code1 == 0x14 and cc_code2 == 0x72:
+                                    if currentBuffer:
+                                        currentBuffer += '\n'
+                                if (cc_code1 == 0x14 and cc_code2 == 0x28) or \
+                                        (cc_code1 == 0x14 and cc_code2 == 0x74) or \
+                                        (cc_code1 == 0x14 and cc_code2 == 0x76) or \
+                                        (cc_code1 == 0x14 and cc_code2 == 0x70):
                                     if currentBuffer:
                                         currentBuffer += '\n'
                                 elif cc_code1 == 0x11 and cc_code2 == 0x2e:
                                     if not italics:
                                         currentBuffer += "<i>"
                                         italics = True
+                                elif cc_code1 == 0x11 and cc_code2 == 0x20:
+                                    if italics:
+                                        currentBuffer += "</i> "
+                                        italics = False
                                 elif cc_code1 == 0x11 and cc_raw_code2 in _specialChars:
                                     currentBuffer += cc_code2
                                 elif cc_code1 == 0x12 and cc_raw_code2 in _extendedChars:
                                     currentBuffer += cc_code2
-                                elif cc_code1 == 0x14 and (cc_code2 == 0x20 or cc_code2 == 0x26 or cc_code2 == 0x2f or cc_code2 == 0x2D or cc_code2 == 0x2F or cc_code2 == 0x2E):
+                                elif flipMemory:
 
                                     if italics:
-                                        currentBuffer += "</i>"
+                                        currentBuffer += "</i> "
 
                                     if currentBuffer:
                                         item = SCCItem()
                                         item.end_time = sampleTime * 1000
-                                        item.start_time = lastClear * 1000
+                                        item.start_time = captionStart * 1000
                                         item.text = currentBuffer
                                         items.append(item)
+                                        print("{} {} {}".format(_milliseconds_to_smtpe(item.start_time), _milliseconds_to_smtpe(item.end_time), item.text))
 
                                     currentBuffer = ""
-                                    lastClear = sampleTime
                                     italics = False
+                                    flipMemory = False
+                                    captionStart = sampleTime
 
                             elif 0x20 <= cc_code1 <= 0x7F and channelOne:
 
@@ -315,10 +335,15 @@ def parse(file: str, logger: logging.Logger):
     return items
 
 
-def write_srt(items: SCCItem, output_file: str):
+def write_srt(items: SCCItem, alignment_padding: int, output_file: str):
+    with open(output_file, "w+") as f:
+        for idx, val in enumerate(items):
+            val.start_time -= 3600000
+            val.end_time -= 3600000
 
-     with open(output_file, "w+") as f:
-        for idx, val  in enumerate(items):
+            val.start_time += alignment_padding
+            val.end_time += alignment_padding
+
             f.write('{}\n'.format(str(idx + 1)))
             f.write('{} --> {}\n'.format(_milliseconds_to_smtpe(val.start_time), _milliseconds_to_smtpe(val.end_time)))
             f.write('{}\n'.format(val.text))
@@ -326,8 +351,8 @@ def write_srt(items: SCCItem, output_file: str):
 
 
 if __name__ == "__main__":
-    
-    log_format='%(asctime)s - %(levelname)s - %(message)s'
+
+    log_format = '%(asctime)s - %(levelname)s - %(message)s'
     logging.basicConfig(format=log_format)
 
     logger = logging.getLogger()
@@ -341,8 +366,8 @@ if __name__ == "__main__":
     logger.addHandler(logHandler)
 
     items = parse("test.scc", logger)
-    
+
     for item in items:
         print("[{}] [{}] [{}]".format(_milliseconds_to_smtpe(item.start_time), _milliseconds_to_smtpe(item.end_time), item.text))
-    
+
     write_srt(items, "test.srt")

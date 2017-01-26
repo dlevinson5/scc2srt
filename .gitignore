@@ -32,3 +32,7 @@ pip-log.txt
 
 # Sphinx documentation build
 docs/_build
+/.vs
+/scc2srt.sln
+/scc2srt.pyproj.user
+/scc2srt/scc2srt.pyproj
