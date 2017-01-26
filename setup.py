@@ -1,7 +1,7 @@
-3from setuptools import setup
+from setuptools import setup
 
 setup(name='scc2srt',
-      version='0.2',
+      version='0.3',
       description='Convert scenarist .scc file to subrip .srt',
       url='http://github.com/dlevinson5/scc2srt',
       author='David Levinson',
