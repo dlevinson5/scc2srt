@@ -280,6 +280,7 @@ def parse(file: str, logger: logging.Logger):
 
                                 channelOne = True
 
+<<<<<<< HEAD:scc2srt/scc2srt.py
                                 if cc_code1 == 0x14 and cc_code2 == 0x72:
                                     if currentBuffer:
                                         currentBuffer += '\n'
@@ -287,8 +288,16 @@ def parse(file: str, logger: logging.Logger):
                                         (cc_code1 == 0x14 and cc_code2 == 0x74) or \
                                         (cc_code1 == 0x14 and cc_code2 == 0x76) or \
                                         (cc_code1 == 0x14 and cc_code2 == 0x70):
+=======
+                                if (cc_code1 == 0x14 and cc_code2 == 0x72):
+>>>>>>> bf0c2c30c85e51fe12e67bb5231be3b2f8f36a4f:scc2srt/backend.py
                                     if currentBuffer:
                                         currentBuffer += '\n'
+                                if (cc_code1 == 0x14 and cc_code2 == 0x28) or \
+                                        (cc_code1 == 0x14 and cc_code2 == 0x74) or \
+                                        (cc_code1 == 0x14 and cc_code2 == 0x70):
+                                    if currentBuffer:
+                                        currentBuffer += '<br/>'
                                 elif cc_code1 == 0x11 and cc_code2 == 0x2e:
                                     if not italics:
                                         currentBuffer += "<i>"
@@ -335,6 +344,7 @@ def parse(file: str, logger: logging.Logger):
     return items
 
 
+<<<<<<< HEAD:scc2srt/scc2srt.py
 def write_srt(items: SCCItem, alignment_padding: int, output_file: str):
     with open(output_file, "w+") as f:
         for idx, val in enumerate(items):
@@ -344,6 +354,13 @@ def write_srt(items: SCCItem, alignment_padding: int, output_file: str):
             val.start_time += alignment_padding
             val.end_time += alignment_padding
 
+=======
+def write_srt(items: SCCItem, output_file: str):
+    with open(output_file, "w+") as f:
+        for idx, val in enumerate(items):
+            val.start_time = val.start_time - 3600000
+            val.end_time = val.end_time - 3600000
+>>>>>>> bf0c2c30c85e51fe12e67bb5231be3b2f8f36a4f:scc2srt/backend.py
             f.write('{}\n'.format(str(idx + 1)))
             f.write('{} --> {}\n'.format(_milliseconds_to_smtpe(val.start_time), _milliseconds_to_smtpe(val.end_time)))
             f.write('{}\n'.format(val.text))
