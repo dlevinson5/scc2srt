@@ -3,7 +3,7 @@ import logging
 import sys
 
 _ccTxMatrix = dict()
-
+ 
 _ccRowTable = {
     0x11, 0x40, 0x5F,
     0x11, 0x60, 0x7F,
