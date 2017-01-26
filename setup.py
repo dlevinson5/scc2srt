@@ -1,4 +1,4 @@
-from setuptools import setup
+3from setuptools import setup
 
 setup(name='scc2srt',
       version='0.2',
