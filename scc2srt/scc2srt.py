@@ -416,35 +416,15 @@ def _log_caption_item(logger: object, sampleTime: float, captionItem: object, fp
 
 def write_srt(items: SCCItem, alignment_padding: int, output_file: str):
     with open(output_file, "w+") as f:
-        f.write("WEBVTT\n\n")
+        # f.write("WEBVTT\n\n")
         for idx, val in enumerate(items):
             val.start_time += alignment_padding
             val.end_time += alignment_padding
 
             f.write('{}\n'.format(str(idx + 1)))
             f.write('{} --> {}\n'.format(_milliseconds_to_smtpe(val.start_time), _milliseconds_to_smtpe(val.end_time)))
-            f.write('{}\n'.format(val.text))
+            f.write('{}\n'.format(val.text.encode('utf8')))
             f.write('\n')
 
 
-if __name__ == "__main__":
-
-    log_format = '%(asctime)s - %(levelname)s - %(message)s'
-    logging.basicConfig(format=log_format)
-
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
-
-    logHandler = logging.StreamHandler(sys.stdout)
-    logHandler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter(log_format)
-    logHandler.setFormatter(formatter)
-
-    logger.addHandler(logHandler)
-
-    items = parse("test.scc", logger)
-
-    for item in items:
-        print("[{}] [{}] [{}]".format(_milliseconds_to_smtpe(item.start_time), _milliseconds_to_smtpe(item.end_time), item.text))
-
-    write_srt(items, "test.srt")
+ 
