@@ -48,7 +48,6 @@ _specialChars = {
     0x3d: 'î',
     0x3e: 'ô',
     0xbf: 'û',
-    0x70: '\n'
 }
 
 _extendedChars = {
@@ -132,16 +131,68 @@ def _milliseconds_to_smtpe(time: int):
     millseconds = int(time - (hoursMs + minutesMs + secondsMs))
 
     return '{0:02d}:{1:02d}:{2:02d}.{3:03d}'.format(int(hoursMs / 3600000), int(minutesMs / 60000), int(secondsMs / 1000), int(millseconds))
-    # return '{0:02d}:{1:02d}:{2:02d}'.format(int(hoursMs / 3600000), int(minutesMs / 60000), int(secondsMs / 1000), int(millseconds))
 
 
-def _debug_render_command(control_codes: str):
+def _milliseconds_to_smtpe2(time: int, fps=29.976):
+    hoursMs = int(time / 3600000) * 3600000
+    minutesMs = int((time - hoursMs) / 60000) * 60000
+    secondsMs = int((time - (hoursMs + minutesMs)) / 1000) * 1000
+    millseconds = int(time - (hoursMs + minutesMs + secondsMs))
+
+    return '{0:02d}:{1:02d}:{2:02d}:{3:02d}'.format(int(hoursMs / 3600000), int(minutesMs / 60000), int(secondsMs / 1000), int((millseconds / 1008 * fps)))
+
+
+def _debug_render_command(control_codes):
     command = None
+    row = 0
 
-    if control_codes[0] == 0x11:
-        pass
-        # if 0x20 <= control_codes[1] <= 0x2F:
-        #    command = "MRC - Mid-row Code"
+    row_sequence = [0x11, 0x11, 0x12, 0x12, 0x15, 0x15, 0x16, 0x16, 0x17, 0x17, 0x10, 0x13, 0x13, 0x14, 0x14, 0x00]
+
+    if (control_codes[0] < 0x13 and control_codes[0] > 0x14):
+        if (control_codes[1] >= 0x40 and control_codes[1] <= 0x5F):
+            idx = (row_sequence[0::2].index(control_codes[0]))
+            row = (idx * 2) + 1
+        if (control_codes[1] >= 0x60 and control_codes[1] <= 0x7F):
+            idx = (row_sequence[1::2].index(control_codes[0]))
+            row = (idx + 1) * 2
+    if (control_codes[0] == 0x13 or control_codes[0] == 0x14):
+        if (control_codes[1] >= 0x40 and control_codes[1] <= 0x5F):
+            idx = (row_sequence[1::2].index(control_codes[0]))
+            row = (idx + 1) * 2
+        if (control_codes[1] >= 0x60 and control_codes[1] <= 0x7F):
+            idx = (row_sequence[0::2].index(control_codes[0]))
+            row = (idx * 2) + 1
+
+    if control_codes[0] == 0x11 and (0x20 >= control_codes[1] <= 0x2F):
+
+        if control_codes[1] == 0x20 or control_codes[1] == 0x21:
+            command = "MRC - White"
+        elif control_codes[1] == 0x22 or control_codes[1] == 0x23:
+            command = "MRC - Green"
+        elif control_codes[1] == 0x24 or control_codes[1] == 0x25:
+            command = "MRC - Blue"
+        elif control_codes[1] == 0x26 or control_codes[1] == 0x27:
+            command = "MRC - Cyan"
+        elif control_codes[1] == 0x28 or control_codes[1] == 0x29:
+            command = "MRC - Red"
+        elif control_codes[1] == 0x2A or control_codes[1] == 0x2B:
+            command = "MRC - Yellow"
+        elif control_codes[1] == 0x2C or control_codes[1] == 0x2D:
+            command = "MRC - Magenta"
+        elif control_codes[1] == 0x2E:
+            command = "MRC - Italic"
+
+        if (control_codes[1] & 1) == 1:
+            command += ' Underline'
+
+    if control_codes[0] == 0x11 and control_codes[1] in _extendedChars:
+        command = "EXT - (Extended Character)"
+    if control_codes[0] >= 0x11 and ((control_codes[1] >= 0xB0 and control_codes[1] <= 0xBF) or (control_codes[1] >= 0x30 and control_codes[1] <= 0x3F)):
+        command = "SPC - (Special Character)"
+    elif (control_codes[0] >= 0x11 and control_codes[0] <= 0x17) and ((control_codes[1] >= 0x60 and control_codes[1] <= 0x6F) or (control_codes[1] >= 0x40 and control_codes[1] <= 0x4F)):
+        command = "PAC - (Underline) Row [{}]".format(row)
+    elif (control_codes[0] >= 0x11 and control_codes[0] <= 0x17) and ((control_codes[1] >= 0x50 and control_codes[1] <= 0x5F) or (control_codes[1] >= 0x70 and control_codes[1] <= 0x7F)):
+        command = "PAC - (Indent) Row [{}]".format(row)
     elif control_codes[0] == 0x14:
         if control_codes[1] == 0x20:
             command = "RCL - Resume caption loading"
@@ -174,7 +225,7 @@ def _debug_render_command(control_codes: str):
         elif control_codes[1] == 0x2E:
             command = "ENM - Erase Non-Display Memory"
         elif control_codes[1] == 0x2F:
-            command = "EOC - Erase Of Caption (flip-memory)"
+            command = "EOC - End Of Caption (flip-memory)"
         elif control_codes[1] == 0x21:
             command = "TO1 - Tab Offset 1 Column"
         elif control_codes[1] == 0x22:
@@ -188,25 +239,21 @@ def _debug_render_command(control_codes: str):
     return command
 
 
-def parse(file: str, logger: logging.Logger):
+def parse(file: str, logger: logging.Logger, start_offset=3600, source_fps=29.97):
+
+    if logger:
+        logger.debug("[{}]".format(file))
+
     for i in range(128):
         _ccTxMatrix[tmpMatrix[i]] = i
 
-    fps = 23.96
-
     channelOne = False
-    currentBuffer = ""
+    current_buffer = ""
     italics = False
-
-    last_cc_code1 = None
-    last_cc_code2 = None
-
+    underline = False
     items = []
-    lastClear = None
-
-    flipMemory = False
-
-    captionStart = None
+    end_of_caption = False
+    last_caption_item = None
 
     with open(file, 'r') as file:
         for line in file:
@@ -224,123 +271,153 @@ def parse(file: str, logger: logging.Logger):
 
                         # parse the line time
                         time_stamp = smpteTokens.groups(1)
-                        sampleTime = int(time_stamp[0]) * 3600 + int(time_stamp[1]) * 60 + int(time_stamp[2]) + (int(time_stamp[3]) / fps)
+                        line_control_time = (int(time_stamp[0]) * 3600 + int(time_stamp[1]) * 60 + int(time_stamp[2]) + (float(time_stamp[3]) / 30.0)) - start_offset
 
-                        if len(currentBuffer) == 0:
-                            captionStart = sampleTime
-
-                        # create tokenzed list of control codes
+                        # create token list of control codes
                         tokens = result.groups(2)[1].split(' ')
 
                         # create list of control coders
                         codes = [f for f in tokens if len(f) > 0]
 
-                        if len(currentBuffer) > 0:
-                            flipMemory = True
+                        frame_number = 0
 
-                        for sample in codes:
+                        for idx, sample in enumerate(codes):
+
+                            frame_number+=1
+
+                            sampleTime = (line_control_time + (frame_number * ((1 / source_fps)))) * (30.0 / source_fps)
+
+                            if (idx < len(codes)-1 and codes[idx+1] == sample):
+                                continue
 
                             # convert hex control codes to a number
                             cc_raw_code1 = int(sample[0:2], 16)
                             cc_raw_code2 = int(sample[-2:], 16)
 
-                            # conver raw control codes
+                            # convert raw control codes
                             cc_code1 = _ccTxMatrix[cc_raw_code1]
                             cc_code2 = _ccTxMatrix[cc_raw_code2]
 
-                            # skip diplciate codes (this may not be ideal)
-                            if (cc_raw_code1 == last_cc_code1 and cc_raw_code2 == last_cc_code2) or cc_code1 == 0x17:
-                                continue
-
-                            last_cc_code1 = cc_raw_code1
-                            last_cc_code2 = cc_raw_code2
-
-                            if lastClear is None:
-                                lastClear = sampleTime
-
-                            if cc_code1 == 0x11 and cc_raw_code2 in _specialChars:
-                                cc_code2 = _specialChars[cc_raw_code2]
-
-                            elif cc_code1 == 0x11 and cc_raw_code2 in _extendedChars:
-                                cc_code2 = _extendedChars[cc_raw_code2]
-
                             if logger:
-                                smpte = _milliseconds_to_smtpe(sampleTime * 1000)
-                                cmd = _debug_render_command([cc_code1, cc_code2])
+                                _log_caption_details(logger, sampleTime, cc_code1, cc_code2, sample, source_fps)
 
-                                if cmd:
-                                    logger.debug("[{0}] [{4}] [{1:02x}] [{2:02x}] [{3}]".format(smpte, cc_code1, cc_code2, cmd, sample))
-                                else:
-                                    try:
-                                        logger.debug("[{0}] [{1}] [{2:002x}] [{3:002x}] [{4}] [{5}]".format(smpte, sample, cc_code1, cc_code2, chr(cc_code1), chr(cc_code2)))
-                                    except:
-                                        logger.debug("[{0}] [{4}] [{1}] [{2}] [{3}]".format(smpte, cc_code1, cc_code2, cmd, sample))
+                            # resume captions
+                            if cc_code1 == 0x14 and cc_code2 == 0x2c and last_caption_item:
+                                last_caption_item.end_time = sampleTime * 1000
+                                if logger: _log_caption_item(logger, sampleTime, last_caption_item, source_fps)
+                                last_caption_item = None
+
+                            # erase display memory
+                            if cc_code1 == 0x14 and cc_code2 == 0x2f:
+                                end_of_caption = True
 
                             if 0x10 <= cc_code1 <= 0x14:
 
                                 channelOne = True
 
-                                if cc_code1 == 0x14 and cc_code2 == 0x72:
-                                    if currentBuffer:
-                                        currentBuffer += '\n'
-                                if (cc_code1 == 0x14 and cc_code2 == 0x28) or \
-                                        (cc_code1 == 0x14 and cc_code2 == 0x74) or \
-                                        (cc_code1 == 0x14 and cc_code2 == 0x76) or \
-                                        (cc_code1 == 0x14 and cc_code2 == 0x70):
-                                    if currentBuffer:
-                                        currentBuffer += '\n'
-                                elif cc_code1 == 0x11 and cc_code2 == 0x2e:
-                                    if not italics:
-                                        currentBuffer += "<i>"
-                                        italics = True
-                                elif cc_code1 == 0x11 and cc_code2 == 0x20:
+                                if (cc_code1 >= 0x11 and cc_code1 <= 0x17) and ((cc_code2 >= 0x60 and cc_code2 <= 0x6F) or (cc_code2 >= 0x40 and cc_code2 <= 0x4F)):
+                                    # If the least significant bit of a Preamble Address Code or of a color or italics Mid-Row Code is a 1 (high), un-derlining is turned on
+                                    if not underline and (cc_code2 & 1) == 1:
+                                        current_buffer += "<u>"
+                                        underline = True
+                                    continue
+                                elif (cc_code1 >= 0x11 and cc_code1 <= 0x17) and ((cc_code2 >= 0x50 and cc_code2 <= 0x5F) or (cc_code2 >= 0x70 and cc_code2 <= 0x7F)):
+                                    # indent
+                                    if current_buffer:
+                                        current_buffer += '\n'
+                                    continue
+
+                                if cc_code1 == 0x11 and (cc_code2 >= 0x20 and cc_code2 <= 0x2F):
+                                    # Any color Mid-Row Code will turn off italics.
                                     if italics:
-                                        currentBuffer += "</i> "
+                                        current_buffer += "</i> "
                                         italics = False
+
+                                    # un-derlining is turned on if color or italics Mid-Row Code is a 1 (high)
+                                    if not underline and (cc_code2 & 1) == 1:
+                                        current_buffer += "<u>"
+                                        underline = True
+
+                                    if cc_code1 == 0x11 and cc_code2 == 0x2E and not italics:
+                                        current_buffer += "<i>"
+                                        italics = True
+
+                                if cc_code1 == 0x14 and (cc_code2 == 0x28 or cc_code2 == 0x2D):
+                                    # Flash On
+                                    if current_buffer:
+                                        current_buffer += '\n'
                                 elif cc_code1 == 0x11 and cc_raw_code2 in _specialChars:
-                                    currentBuffer += cc_code2
+                                    current_buffer += _specialChars[cc_raw_code2]
                                 elif cc_code1 == 0x12 and cc_raw_code2 in _extendedChars:
-                                    currentBuffer += cc_code2
-                                elif flipMemory:
+                                    current_buffer += _extendedChars[cc_raw_code2]
+                                elif end_of_caption:
 
                                     if italics:
-                                        currentBuffer += "</i> "
+                                        current_buffer += "</i> "
 
-                                    if currentBuffer:
+                                    if underline:
+                                        current_buffer += "</u> "
+
+                                    if current_buffer:
                                         item = SCCItem()
-                                        item.end_time = sampleTime * 1000
-                                        item.start_time = captionStart * 1000
-                                        item.text = currentBuffer
+                                        item.end_time = -1
+                                        item.start_time = sampleTime * 1000
+                                        item.text = current_buffer
                                         items.append(item)
-                                        # print("{} {} {}".format(_milliseconds_to_smtpe(item.start_time), _milliseconds_to_smtpe(item.end_time), item.text))
+                                        last_caption_item = item
 
-                                    currentBuffer = ""
+                                    current_buffer = ""
                                     italics = False
-                                    flipMemory = False
-                                    captionStart = sampleTime
+                                    underline = False
+                                    end_of_caption = False
 
                             elif 0x20 <= cc_code1 <= 0x7F and channelOne:
 
-                                if currentBuffer == "":
-                                    sampleTime = sampleTime
-
-                                currentBuffer += chr(cc_code1)
+                                current_buffer += chr(cc_code1)
 
                                 if 0x20 <= cc_code2 <= 0x7F:
-                                    currentBuffer += chr(cc_code2)
+                                    current_buffer += chr(cc_code2)
 
                             elif 0x18 <= cc_code1 <= 0x1F:
                                 channelOne = False
 
+    if last_caption_item and last_caption_item.end_time == -1:
+        last_caption_item.end_time = sampleTime * 1000
+        if logger: _log_caption_item(logger, sampleTime, last_caption_item, source_fps)
+
     return items
+
+
+def _log_caption_details(logger, sampleTime, cc_code1, cc_code2, sample, fps=29.976):
+
+    smpte = _milliseconds_to_smtpe(sampleTime * 1000)
+    cmd = _debug_render_command([cc_code1, cc_code2])
+
+    frameTime = _milliseconds_to_smtpe2(sampleTime * 1000, fps)
+
+    if cmd:
+        logger.debug("[{5}] [{0}] [{4}] [{1:02x}] [{2:02x}] [{3}]".format(smpte, cc_code1, cc_code2, cmd, sample, frameTime))
+    else:
+        try:
+            logger.debug("[{6}] [{0}] [{1}] [{2:002x}] [{3:002x}] [{4}] [{5}]".format(smpte, sample, cc_code1, cc_code2, chr(cc_code1), chr(cc_code2), frameTime))
+        except:
+            logger.debug("[{5}] {0},{4},{1},{2},{3}".format(smpte, cc_code1, cc_code2, cmd, sample, frameTime))
+
+
+def _log_caption_item(logger: object, sampleTime: float, captionItem: object, fps=29.976):
+
+    frameTime = _milliseconds_to_smtpe2(sampleTime * 1000, fps)
+
+    logger.debug("[{0}] [{1}] [{2}] => [{3}]".format(_milliseconds_to_smtpe2(captionItem.start_time),
+                                                                   _milliseconds_to_smtpe2(captionItem.end_time),
+                                                                   captionItem.text.replace('\n', '<br/>'),
+                                                                   frameTime))
 
 
 def write_srt(items: SCCItem, alignment_padding: int, output_file: str):
     with open(output_file, "w+") as f:
+        f.write("WEBVTT\n\n")
         for idx, val in enumerate(items):
-            val.start_time -= 3600000
-            val.end_time -= 3600000
-
             val.start_time += alignment_padding
             val.end_time += alignment_padding
 
