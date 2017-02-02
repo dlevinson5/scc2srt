@@ -239,7 +239,7 @@ def _debug_render_command(control_codes):
     return command
 
 
-def parse(file: str, logger: logging.Logger, start_offset=3600, source_fps=29.97):
+def parse(file: str, logger: logging.Logger, start_offset=3600):
 
     if logger:
         logger.debug("[{}]".format(file))
@@ -267,17 +267,21 @@ def parse(file: str, logger: logging.Logger, start_offset=3600, source_fps=29.97
 
                     smpteTokens = re.match("([0-9*]{2}):([0-9*]{2}):([0-9*]{2})[:;]*([0-9*]{2})", critera)
 
+                    is_drop_frame = ';' in critera
+
                     if smpteTokens:
 
                         # parse the line time
                         time_stamp = smpteTokens.groups(1)
-                        line_control_time = (int(time_stamp[0]) * 3600 + int(time_stamp[1]) * 60 + int(time_stamp[2]) + (float(time_stamp[3]) / 30.0)) - start_offset
+
+                        # get the line control time based on 29.97fps 
+                        line_control_time = (int(time_stamp[0]) * 3600 + int(time_stamp[1]) * 60 + int(time_stamp[2]) + (float(time_stamp[3]) / 29.97))
 
                         # create token list of control codes
                         tokens = result.groups(2)[1].split(' ')
 
                         # create list of control coders
-                        codes = [f for f in tokens if len(f) > 0]
+                        codes = [x for x in tokens if len(x) > 0]
 
                         frame_number = 0
 
@@ -285,7 +289,14 @@ def parse(file: str, logger: logging.Logger, start_offset=3600, source_fps=29.97
 
                             frame_number+=1
 
-                            sampleTime = (line_control_time + (frame_number * ((1 / source_fps)))) * (30.0 / source_fps)
+                            if is_drop_frame:
+                                # DF - Output time exactly as stated 29.97 -> 29.97
+                                seconds_per_timestamp_second = 1.0
+                            else: # non drop frame - time rendered 29.97 -> 30fps
+                                seconds_per_timestamp_second = 30.0 / 29.97
+
+                            # ensure the time stamp reflects the correct *real* time based on 30pfs output 
+                            sampleTime = (((line_control_time + (frame_number * ((1/29.97)))) - start_offset) * seconds_per_timestamp_second)
 
                             if (idx < len(codes)-1 and codes[idx+1] == sample):
                                 continue
@@ -299,12 +310,12 @@ def parse(file: str, logger: logging.Logger, start_offset=3600, source_fps=29.97
                             cc_code2 = _ccTxMatrix[cc_raw_code2]
 
                             if logger:
-                                _log_caption_details(logger, sampleTime, cc_code1, cc_code2, sample, source_fps)
+                                _log_caption_details(logger, sampleTime, cc_code1, cc_code2, sample)
 
                             # resume captions
                             if cc_code1 == 0x14 and cc_code2 == 0x2c and last_caption_item:
                                 last_caption_item.end_time = sampleTime * 1000
-                                if logger: _log_caption_item(logger, sampleTime, last_caption_item, source_fps)
+                                if logger: _log_caption_item(logger, sampleTime, last_caption_item)
                                 last_caption_item = None
 
                             # erase display memory
@@ -383,7 +394,7 @@ def parse(file: str, logger: logging.Logger, start_offset=3600, source_fps=29.97
 
     if last_caption_item and last_caption_item.end_time == -1:
         last_caption_item.end_time = sampleTime * 1000
-        if logger: _log_caption_item(logger, sampleTime, last_caption_item, source_fps)
+        if logger: _log_caption_item(logger, sampleTime, last_caption_item)
 
     return items
 
@@ -423,8 +434,28 @@ def write_srt(items: SCCItem, alignment_padding: int, output_file: str):
 
             f.write('{}\n'.format(str(idx + 1)))
             f.write('{} --> {}\n'.format(_milliseconds_to_smtpe(val.start_time), _milliseconds_to_smtpe(val.end_time)))
-            f.write('{}\n'.format(val.text.encode('utf8')))
+            f.write('{}\n'.format(val.text))
             f.write('\n')
 
 
- 
+if __name__ == "__main__":
+
+    log_format = '%(asctime)s - %(levelname)s - %(message)s'
+    logging.basicConfig(format=log_format)
+
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+
+    logHandler = logging.StreamHandler(sys.stdout)
+    logHandler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(log_format)
+    logHandler.setFormatter(formatter)
+
+    logger.addHandler(logHandler)
+
+    items = parse("test.scc", logger)
+
+    for item in items:
+        print("[{}] [{}] [{}]".format(_milliseconds_to_smtpe(item.start_time), _milliseconds_to_smtpe(item.end_time), item.text))
+
+    write_srt(items, "test.srt")
