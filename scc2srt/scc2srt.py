@@ -1,6 +1,7 @@
 import re
 import logging
 import sys
+import os
 
 _ccTxMatrix = dict()
 
@@ -254,6 +255,10 @@ def parse(file: str, logger: logging.Logger, start_offset=3600):
     items = []
     end_of_caption = False
     last_caption_item = None
+    max_popup_time = 5000
+    roll_up_mode = False
+    roll_up_start = None
+    roll_up_end = None
 
     with open(file, 'r') as file:
         for line in file:
@@ -274,14 +279,14 @@ def parse(file: str, logger: logging.Logger, start_offset=3600):
                         # parse the line time
                         time_stamp = smpteTokens.groups(1)
 
-                        # get the line control time based on 29.97fps 
+                        # assume base time of 01:00:00,000
                         line_control_time = (int(time_stamp[0]) * 3600 + int(time_stamp[1]) * 60 + int(time_stamp[2]) + (float(time_stamp[3]) / 29.97))
 
                         # create token list of control codes
                         tokens = result.groups(2)[1].split(' ')
 
                         # create list of control coders
-                        codes = [x for x in tokens if len(x) > 0]
+                        codes = [f for f in tokens if len(f) > 0]
 
                         frame_number = 0
 
@@ -290,14 +295,13 @@ def parse(file: str, logger: logging.Logger, start_offset=3600):
                             frame_number+=1
 
                             if is_drop_frame:
-                                # DF - Output time exactly as stated 29.97 -> 29.97
                                 seconds_per_timestamp_second = 1.0
-                            else: # non drop frame - time rendered 29.97 -> 30fps
+                            else: # non drop frame
                                 seconds_per_timestamp_second = 30.0 / 29.97
 
-                            # ensure the time stamp reflects the correct *real* time based on 30pfs output 
                             sampleTime = (((line_control_time + (frame_number * ((1/29.97)))) - start_offset) * seconds_per_timestamp_second)
 
+                            # skip duplicate commands
                             if (idx < len(codes)-1 and codes[idx+1] == sample):
                                 continue
 
@@ -309,18 +313,39 @@ def parse(file: str, logger: logging.Logger, start_offset=3600):
                             cc_code1 = _ccTxMatrix[cc_raw_code1]
                             cc_code2 = _ccTxMatrix[cc_raw_code2]
 
+                            # detect if rollup mode (first code is rollup command)
+                            if frame_number == 1 and not roll_up_mode and cc_code1 == 0x14 and (cc_code2 == 0x25 or cc_code2 == 0x26 or cc_code2 == 0x27):
+                                roll_up_mode = True
+
+                            # skip time stamps before the 01:00:00,000 mark
+                            if (sampleTime < 0):
+                                continue
+
                             if logger:
                                 _log_caption_details(logger, sampleTime, cc_code1, cc_code2, sample)
 
-                            # resume captions
-                            if cc_code1 == 0x14 and cc_code2 == 0x2c and last_caption_item:
+                            # EDM - Erase Display Memory or ENM - Erase Non-Display Memory
+                            if not(roll_up_mode) and len(current_buffer) > 0 and cc_code1 == 0x14 and (cc_code2 == 0x2c or cc_code2 == 0x2f) and last_caption_item:
                                 last_caption_item.end_time = sampleTime * 1000
+
+                                if (last_caption_item.end_time - last_caption_item.start_time > max_popup_time):
+                                    end_time = (min(len(last_caption_item.text) * 150, max_popup_time))
+                                    last_caption_item.end_time = last_caption_item.start_time + end_time
+
                                 if logger: _log_caption_item(logger, sampleTime, last_caption_item)
                                 last_caption_item = None
 
-                            # erase display memory
-                            if cc_code1 == 0x14 and cc_code2 == 0x2f:
+                            # erase display memory - EOC - End Of Caption (flip-memory) / CR - Carriage Return
+                            if not roll_up_mode and cc_code1 == 0x14 and cc_code2 == 0x2f:
                                 end_of_caption = True
+
+                            # Rollup command
+                            if roll_up_mode and cc_code1 == 0x14 and (cc_code2 == 0x25 or cc_code2 == 0x26 or cc_code2 == 0x27):
+                                end_of_caption = True
+
+                            # [CR - Carriage Return]
+                            if roll_up_mode and cc_code1 == 0x14 and cc_code2 == 0x2d:
+                                roll_up_start = sampleTime
 
                             if 0x10 <= cc_code1 <= 0x14:
 
@@ -334,7 +359,7 @@ def parse(file: str, logger: logging.Logger, start_offset=3600):
                                     continue
                                 elif (cc_code1 >= 0x11 and cc_code1 <= 0x17) and ((cc_code2 >= 0x50 and cc_code2 <= 0x5F) or (cc_code2 >= 0x70 and cc_code2 <= 0x7F)):
                                     # indent
-                                    if current_buffer:
+                                    if current_buffer and current_buffer[-1:] != '\n':
                                         current_buffer += '\n'
                                     continue
 
@@ -355,7 +380,7 @@ def parse(file: str, logger: logging.Logger, start_offset=3600):
 
                                 if cc_code1 == 0x14 and (cc_code2 == 0x28 or cc_code2 == 0x2D):
                                     # Flash On
-                                    if current_buffer:
+                                    if current_buffer and current_buffer[-1:] != '\n':
                                         current_buffer += '\n'
                                 elif cc_code1 == 0x11 and cc_raw_code2 in _specialChars:
                                     current_buffer += _specialChars[cc_raw_code2]
@@ -372,8 +397,20 @@ def parse(file: str, logger: logging.Logger, start_offset=3600):
                                     if current_buffer:
                                         item = SCCItem()
                                         item.end_time = -1
-                                        item.start_time = sampleTime * 1000
                                         item.text = current_buffer
+
+                                        if roll_up_mode:
+                                            item.start_time = roll_up_start * 1000
+                                            item.end_time = sampleTime * 1000
+
+                                            if (item.end_time - item.start_time) > max_popup_time:
+                                                end_time = (min(len(item.text) * 150, max_popup_time))
+                                                item.end_time = item.start_time + end_time
+
+                                            if logger: _log_caption_item(logger, sampleTime, item)
+                                        else:
+                                            item.start_time = sampleTime * 1000
+
                                         items.append(item)
                                         last_caption_item = item
 
@@ -427,7 +464,6 @@ def _log_caption_item(logger: object, sampleTime: float, captionItem: object, fp
 
 def write_srt(items: SCCItem, alignment_padding: int, output_file: str):
     with open(output_file, "w+") as f:
-        # f.write("WEBVTT\n\n")
         for idx, val in enumerate(items):
             val.start_time += alignment_padding
             val.end_time += alignment_padding
@@ -438,24 +474,8 @@ def write_srt(items: SCCItem, alignment_padding: int, output_file: str):
             f.write('\n')
 
 
-if __name__ == "__main__":
+def convert(input_file: str, output_file: str, alignment_padding=0, logger: logging.Logger = None):
 
-    log_format = '%(asctime)s - %(levelname)s - %(message)s'
-    logging.basicConfig(format=log_format)
+    items = parse(input_file, logger,  )
 
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
-
-    logHandler = logging.StreamHandler(sys.stdout)
-    logHandler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter(log_format)
-    logHandler.setFormatter(formatter)
-
-    logger.addHandler(logHandler)
-
-    items = parse("test.scc", logger)
-
-    for item in items:
-        print("[{}] [{}] [{}]".format(_milliseconds_to_smtpe(item.start_time), _milliseconds_to_smtpe(item.end_time), item.text))
-
-    write_srt(items, "test.srt")
+    write_srt(items, alignment_padding, output_file) 
